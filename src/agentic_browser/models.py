@@ -120,13 +120,27 @@ class Provider:
 
 
 class OpenAIProvider(Provider):
+    """OpenAI API, or any OpenAI-compatible endpoint.
+
+    OPENAI_API_KEY   required (set to any value for keyless servers like vLLM)
+    OPENAI_BASE_URL  optional — e.g. https://openrouter.ai/api/v1 or
+                     http://localhost:8000/v1 ; a trailing /v1 is added
+                     if missing. Unset = real OpenAI.
+    """
+
     def __init__(self) -> None:
         from openai import OpenAI
 
         api_key = os.environ.get("OPENAI_API_KEY", "").strip()
         if not api_key:
             raise RuntimeError("OPENAI_API_KEY is not set.")
-        self.client = OpenAI(api_key=api_key, http_client=_make_http_client())
+        base_url = os.environ.get("OPENAI_BASE_URL", "").strip().rstrip("/")
+        kwargs: dict = {"api_key": api_key, "http_client": _make_http_client()}
+        if base_url:
+            if not base_url.endswith("/v1"):
+                base_url += "/v1"
+            kwargs["base_url"] = base_url
+        self.client = OpenAI(**kwargs)
 
     def generate(self, model_id, messages, tools=None, max_tokens=4096) -> ModelMessage:
         payload: list[dict] = []
