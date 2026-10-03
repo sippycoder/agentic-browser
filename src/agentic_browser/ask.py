@@ -59,5 +59,26 @@ class CallbackAskChannel(AskChannel):
         return self.fn(prompt, options) or ""
 
 
+class QueueAskChannel(AskChannel):
+    """Ask across a process boundary (the Frontier chat sidecar).
+
+    Puts the question on ask_queue and blocks until the answer arrives on
+    answer_queue. The serving layer forwards questions to the UI over SSE
+    and posts answers back. A timeout avoids leaking the agent thread if
+    nobody answers."""
+
+    def __init__(self, ask_queue, answer_queue, timeout: float = 600) -> None:
+        self.ask_queue = ask_queue
+        self.answer_queue = answer_queue
+        self.timeout = timeout
+
+    def ask(self, prompt: str, options: list[str] | None = None) -> str:
+        self.ask_queue.put({"prompt": prompt, "options": options})
+        try:
+            return self.answer_queue.get(timeout=self.timeout) or ""
+        except Exception:
+            return ""
+
+
 def channel_from_auto(auto_approve: bool) -> AskChannel:
     return TerminalAskChannel(auto_approve=auto_approve)

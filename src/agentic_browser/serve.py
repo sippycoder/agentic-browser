@@ -20,13 +20,35 @@ that shared state is the known hard part of the cloud evolution.
 from __future__ import annotations
 
 import json
+import queue
+import threading
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from .agent import BrowserAgent
+from .ask import QueueAskChannel
 from .browser import BrowserSession
 from .memory import SecondBrain
 from .models import Router
+
+
+class ChatSessionState:
+    """One in-app chat: an attached tab, conversation history, and the
+    queues that carry ask-back questions to the UI and answers back."""
+
+    def __init__(self, sid: str, session: BrowserSession) -> None:
+        self.id = sid
+        self.session = session
+        self.history: list[tuple[str, str]] = []  # (user message, agent answer)
+        self.run_lock = threading.Lock()
+        self.ask_queue: queue.Queue = queue.Queue()
+        self.answer_queue: queue.Queue = queue.Queue()
+        self.event_queue: queue.Queue = queue.Queue()
+
+
+chat_sessions: dict[str, ChatSessionState] = {}
+chat_lock = threading.Lock()
 
 
 class WorkerHandler(BaseHTTPRequestHandler):
@@ -36,6 +58,7 @@ class WorkerHandler(BaseHTTPRequestHandler):
         body = json.dumps(obj).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")  # localhost UI
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -50,6 +73,18 @@ class WorkerHandler(BaseHTTPRequestHandler):
         if self.path == "/run-tab-task":
             self._handle_tab_task()
             return
+        if self.path == "/chat-sessions":
+            self._handle_chat_create()
+            return
+        if self.path.startswith("/chat-sessions/"):
+            parts = self.path.split("/")
+            # /chat-sessions/{id}/run | /chat-sessions/{id}/answer
+            if len(parts) == 4 and parts[3] == "run":
+                self._handle_chat_run(parts[2])
+                return
+            if len(parts) == 4 and parts[3] == "answer":
+                self._handle_chat_answer(parts[2])
+                return
         if self.path != "/run-worker":
             self._json({"error": "not found"}, 404)
             return
@@ -149,6 +184,157 @@ class WorkerHandler(BaseHTTPRequestHandler):
             )
         finally:
             session.close()
+
+    # -- in-app chat ----------------------------------------------------
+    def _read_json(self) -> dict:
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            return json.loads(self.rfile.read(length).decode() or "{}")
+        except (ValueError, json.JSONDecodeError):
+            return {}
+
+    def _cors(self) -> None:
+        # The Electron renderer fetches these directly (file:// origin).
+        self.send_header("Access-Control-Allow-Origin", "*")
+
+    def do_OPTIONS(self) -> None:
+        self.send_response(204)
+        self._cors()
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+
+    def do_DELETE(self) -> None:
+        parts = self.path.split("/")
+        if len(parts) == 3 and parts[1] == "chat-sessions":
+            with chat_lock:
+                st = chat_sessions.pop(parts[2], None)
+            if st:
+                try:
+                    st.session.close()
+                except Exception:
+                    pass
+            self._json({"ok": True})
+            return
+        self._json({"error": "not found"}, 404)
+
+    def _handle_chat_create(self) -> None:
+        """Attach a new chat to one of the Frontier app's visible tabs."""
+        req = self._read_json()
+        cdp_url = req.get("cdp_url")
+        if not cdp_url:
+            self._json({"error": "cdp_url required"}, 400)
+            return
+        try:
+            session = BrowserSession().attach_cdp(cdp_url, req.get("url_match"))
+        except Exception as e:
+            self._json({"error": f"attach failed: {e}"}, 502)
+            return
+        sid = uuid.uuid4().hex[:12]
+        with chat_lock:
+            chat_sessions[sid] = ChatSessionState(sid, session)
+        self._json({"session_id": sid})
+
+    def _handle_chat_run(self, sid: str) -> None:
+        """Run one chat turn as SSE. Streams thought/action/question/done."""
+        with chat_lock:
+            st = chat_sessions.get(sid)
+        if st is None:
+            self._json({"error": "unknown chat session"}, 404)
+            return
+        if not st.run_lock.acquire(blocking=False):
+            self._json({"error": "a turn is already running"}, 409)
+            return
+        try:
+            req = self._read_json()
+            message = (req.get("message") or "").strip()
+            if not message:
+                self._json({"error": "message required"}, 400)
+                return
+
+            # Conversation context: last few exchanges keep the agent grounded
+            # in what was already discussed and done in this tab.
+            hist = st.history[-6:]
+            ctx_lines = []
+            for um, aa in hist:
+                ctx_lines.append(f"User: {um[:400]}")
+                ctx_lines.append(f"Agent: {aa[:600]}")
+            ctx = "\n".join(ctx_lines)
+            task = (
+                (f"Conversation so far in this tab:\n{ctx}\n\n" if ctx else "")
+                + f"User: {message}\n\nRespond to the latest user message. "
+                "You are driving the user's visible browser tab — they watch "
+                "everything. If you need information (a code, a choice, a "
+                "clarification), ask with the ask_user tool."
+            )
+
+            router: Router = self.server.router  # type: ignore[attr-defined]
+            brain: SecondBrain = self.server.brain  # type: ignore[attr-defined]
+            channel = QueueAskChannel(st.ask_queue, st.answer_queue)
+            agent = BrowserAgent(
+                session=st.session,
+                brain=brain,
+                router=router,
+                model_role="worker",
+                max_steps=int(req.get("max_steps", 40)),
+                name="frontier-chat",
+                trajectory_root=Path("trajectories") / "frontier-chat" / sid,
+                ask_channel=channel,
+                on_event=lambda et, d: st.event_queue.put((et, d)),
+            )
+            box: dict = {}
+            t = threading.Thread(target=lambda: box.update(result=agent.run(task)), daemon=True)
+            t.start()
+
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self._cors()
+            self.end_headers()
+
+            def send(evt: dict) -> None:
+                self.wfile.write(f"data: {json.dumps(evt)}\n\n".encode())
+                self.wfile.flush()
+
+            send({"type": "status", "text": "working…"})
+            while t.is_alive() or not st.event_queue.empty():
+                try:
+                    q = st.ask_queue.get_nowait()
+                    send({"type": "question", "prompt": q["prompt"], "options": q.get("options")})
+                except queue.Empty:
+                    pass
+                try:
+                    etype, data = st.event_queue.get(timeout=1.0)
+                    send({"type": etype, **data})
+                except queue.Empty:
+                    self.wfile.write(b": ping\n\n")
+                    self.wfile.flush()
+            t.join()
+            result = box.get("result")
+            if result is None:
+                send({"type": "done", "answer": "(agent crashed)", "finished": False, "steps": 0})
+            else:
+                send({
+                    "type": "done",
+                    "answer": result.answer,
+                    "finished": result.finished,
+                    "steps": result.steps,
+                })
+                st.history.append((message, result.answer))
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # UI went away mid-stream; the agent thread keeps its answer queued
+        finally:
+            st.run_lock.release()
+
+    def _handle_chat_answer(self, sid: str) -> None:
+        with chat_lock:
+            st = chat_sessions.get(sid)
+        if st is None:
+            self._json({"error": "unknown chat session"}, 404)
+            return
+        req = self._read_json()
+        st.answer_queue.put(req.get("text", ""))
+        self._json({"ok": True})
 
     def log_message(self, fmt: str, *args) -> None:
         print(f"[serve] {self.address_string()} {fmt % args}")

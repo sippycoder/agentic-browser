@@ -13,6 +13,7 @@ from agentic_browser.agent import TOOLS, BrowserAgent
 from agentic_browser.ask import (
     AskChannel,
     CallbackAskChannel,
+    QueueAskChannel,
     TerminalAskChannel,
     channel_from_auto,
 )
@@ -110,9 +111,31 @@ def test_ask_user_flow():
     print("ok: ask_user question -> channel answer -> task resumes")
 
 
+def test_queue_channel():
+    import queue as _queue
+    import threading as _threading
+
+    ask_q, ans_q = _queue.Queue(), _queue.Queue()
+    ch = QueueAskChannel(ask_q, ans_q)
+    box = {}
+
+    def worker():
+        box["answer"] = ch.ask("What is the code?", options=["a", "b"])
+
+    t = _threading.Thread(target=worker, daemon=True)
+    t.start()
+    q = ask_q.get(timeout=5)
+    assert q == {"prompt": "What is the code?", "options": ["a", "b"]}, q
+    ans_q.put("777")
+    t.join(timeout=5)
+    assert box["answer"] == "777"
+    print("ok: queue channel (cross-thread ask/answer)")
+
+
 if __name__ == "__main__":
     test_terminal_channels()
     test_callback_channel()
+    test_queue_channel()
     test_ask_user_in_tools()
     test_approval_routes_through_channel()
     test_ask_user_flow()

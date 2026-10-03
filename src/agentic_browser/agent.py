@@ -17,6 +17,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 from .ask import AskChannel, channel_from_auto
 from .browser import BrowserSession
@@ -283,10 +284,18 @@ class BrowserAgent:
     use_micro_gate: bool = True  # route ambiguous actions to the micro model
     prompt_pack: str | None = None  # M5: distilled few-shot examples prepended to the system prompt
     ask_channel: AskChannel | None = None  # how the agent asks back; built from auto_approve if None
+    on_event: Callable[[str, dict], None] | None = None  # streaming progress for chat UIs
 
     def __post_init__(self) -> None:
         if self.ask_channel is None:
             self.ask_channel = channel_from_auto(self.auto_approve)
+
+    def _emit(self, etype: str, data: dict) -> None:
+        if self.on_event:
+            try:
+                self.on_event(etype, data)
+            except Exception:
+                pass
     _last_elements: list = field(default_factory=list, repr=False)
     _elevated_until: int = field(default=0, repr=False)  # M4: steps under elevated risk after injection flags
 
@@ -527,6 +536,7 @@ class BrowserAgent:
                     tag=f"agent:{self.name}",
                 )
                 messages.append(resp)
+                self._emit("thought", {"step": steps, "text": (resp.text or "")[:500]})
 
                 if not resp.tool_calls:
                     messages.append(
@@ -590,8 +600,13 @@ class BrowserAgent:
                         log_tool(steps, resp.text, tc.name, tc.arguments, obs.url,
                                  f"high:{risk};auto-approved" if risk else None)
 
-                    result = self._execute(tc.name, tc.arguments)
-                    # M5: log the outcome so trajectories capture state transitions
+                    self._emit("action", {
+                        "step": steps,
+                        "tool": tc.name,
+                        "args": {k: (str(v)[:120]) for k, v in tc.arguments.items()},
+                        "risk": risk,
+                    })
+                    result = self._execute(tc.name, tc.arguments)                    # M5: log the outcome so trajectories capture state transitions
                     traj_log.write(
                         json.dumps(
                             {
@@ -629,6 +644,7 @@ class BrowserAgent:
             )
             traj_log.close()
 
+        self._emit("done", {"answer": answer, "finished": finished, "steps": steps})
         return AgentResult(
             answer=answer,
             steps=steps,
