@@ -9,6 +9,7 @@ dependencies = [
     "anthropic>=0.40",
     "pyyaml>=6.0",
     "croniter>=2.0",
+    "mcp>=2.0",
 ]
 
 [project.scripts]

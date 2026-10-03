@@ -205,13 +205,42 @@ data (Moonshot's API does not offer fine-tuning). The prompt pack is the loop
 that works today against any provider. Evals can use `fixture://` URLs to run
 against hermetic local pages instead of the live web.
 
+## MCP server — any main agent can drive the browser
+
+`python -m agentic_browser.cli mcp` runs a Model Context Protocol server over
+stdio. Wire it into any MCP-capable main agent (Claude, Cursor, …):
+
+```json
+{"command": "/path/to/agentic-browser/.venv/bin/python",
+ "args": ["-m", "agentic_browser.cli", "mcp"]}
+```
+
+Tools: `browser_start_session`, `browser_navigate`, `browser_snapshot`,
+`browser_click`, `browser_fill`, `browser_press`, `browser_scroll`,
+`browser_back`, `browser_get_text`, `browser_screenshot`,
+`browser_run_task`, `browser_close_session`.
+
+The agent is conversational: `browser_run_task` runs the autonomous loop
+inside a session, and when it needs something — an approval for a high-risk
+action, or an `ask_user` question (a login code, a clarification) — it asks
+back via MCP elicitation. The main agent's answer resumes the loop.
+The same ask channel drives terminal runs (human prompt), `auto_approve`
+background runs, and programmatic callbacks (`CallbackAskChannel`).
+
 ## Safety
 
-v0 has **no approval gates**: the agent clicks and types as configured. Run it
-against low-stakes sites first, use a throwaway profile for anything requiring
-login, and never point it at banking, email sending, or purchases until M2
-guardrails land. This matches how Polar itself frames its "high-risk action"
-guardrails — except we don't have them yet, so the human is the guardrail.
+Approval gates (M2): every proposed action is risk-assessed — heuristics plus
+the micro model as classifier. High-risk actions (submit, payment, delete,
+send, publish, account changes) ask first; a denial can't be retried.
+Prompt-injection defenses (M4): trust-boundary system prompt, per-observation
+pattern scan, trajectory flags, forced approvals after a hit. Budget guard
+(`AGENTIC_BUDGET_USD`) halts new work past rolling spend. `.env` is
+git-ignored and chmod 600.
+
+Honest gaps: no site allowlist; Chromium runs with `--no-sandbox` in
+containers; `auto_approve` removes the human; page content flows to the
+model by design; trajectories sit on disk unencrypted. Run low-stakes sites
+first, use a throwaway profile for logins.
 
 ## Sandbox / CI note
 

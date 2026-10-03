@@ -134,6 +134,13 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_mcp(args: argparse.Namespace) -> int:
+    from agentic_browser.mcp_server import main as mcp_main
+
+    mcp_main()
+    return 0
+
+
 def cmd_distill(args: argparse.Namespace) -> int:
     from agentic_browser.distill import (
         export_jsonl,
@@ -248,6 +255,9 @@ def main() -> int:
     v.add_argument("--host", default="127.0.0.1")
     v.add_argument("--brain", default="brain")
     v.set_defaults(fn=cmd_serve)
+
+    m = sub.add_parser("mcp", help="Run the MCP server (stdio) so any main agent can drive the browser.")
+    m.set_defaults(fn=cmd_mcp)
 
     u = sub.add_parser("usage", help="Show metered model spend.")
     u.add_argument("action", nargs="?", choices=["report"], default="report")

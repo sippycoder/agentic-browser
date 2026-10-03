@@ -43,3 +43,6 @@
 {"ts": "2026-10-03T17:24:46.558565+00:00", "role": "judge", "model": "moonshot:kimi-k3", "tag": "eval:example-basics:judge", "prompt_tokens": 4577, "completion_tokens": 132, "cached_tokens": 0, "cost_usd": 0.015711}
 {"ts": "2026-10-03T17:34:38.110273+00:00", "role": "worker", "model": "moonshot:kimi-k3", "tag": "agent:frontier-tab", "prompt_tokens": 2120, "completion_tokens": 124, "cached_tokens": 0, "cost_usd": 0.00822}
 {"ts": "2026-10-03T17:34:49.865197+00:00", "role": "worker", "model": "moonshot:kimi-k3", "tag": "agent:frontier-tab", "prompt_tokens": 3479, "completion_tokens": 203, "cached_tokens": 2108, "cost_usd": 0.00779}
+{"ts": "2026-10-03T19:35:17.233211+00:00", "role": "worker", "model": "moonshot:kimi-k3", "tag": "agent:mcp-worker", "prompt_tokens": 2636, "completion_tokens": 95, "cached_tokens": 0, "cost_usd": 0.009333}
+{"ts": "2026-10-03T19:35:26.173926+00:00", "role": "worker", "model": "moonshot:kimi-k3", "tag": "agent:mcp-worker", "prompt_tokens": 4137, "completion_tokens": 135, "cached_tokens": 2624, "cost_usd": 0.007351}
+{"ts": "2026-10-03T19:35:38.723001+00:00", "role": "worker", "model": "moonshot:kimi-k3", "tag": "agent:mcp-worker", "prompt_tokens": 5891, "completion_tokens": 326, "cached_tokens": 4125, "cost_usd": 0.011425}
