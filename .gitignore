@@ -6,6 +6,9 @@ brain/
 brain-eval/
 trajectories/
 profiles/
+usage/
+workflows/
+distill/
 eval-report.md
 *.png
 *.egg-info/
