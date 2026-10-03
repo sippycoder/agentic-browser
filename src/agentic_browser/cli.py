@@ -250,6 +250,7 @@ def main() -> int:
     v.set_defaults(fn=cmd_serve)
 
     u = sub.add_parser("usage", help="Show metered model spend.")
+    u.add_argument("action", nargs="?", choices=["report"], default="report")
     u.add_argument("--days", type=float, default=1.0)
     u.add_argument("--ledger", default="usage/ledger.jsonl")
     u.set_defaults(fn=cmd_usage)
