@@ -280,6 +280,16 @@ class BrowserSession:
     def _loc(self, ref: str):
         return self._page.locator(f'[data-agent-ref="{ref}"]')
 
+    def new_tab(self, url: str | None = None) -> str:
+        """Open a new tab and make it the driven page. The old tab stays
+        open — the session just follows the new one."""
+        if self._context is None:
+            raise RuntimeError("browser not started")
+        self._page = self._context.new_page()
+        if url:
+            return self.navigate(url)
+        return f"New tab opened: {self._page.url}"
+
     def navigate(self, url: str) -> str:
         if "://" not in url:
             url = "https://" + url

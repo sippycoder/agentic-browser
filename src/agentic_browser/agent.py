@@ -148,6 +148,20 @@ TOOLS: list[dict] = [
         },
     },
     {
+        "name": "browser_new_tab",
+        "description": (
+            "Open a new tab and switch to it. Use when you need a fresh page "
+            "without losing the current one (e.g. keep results open while "
+            "you dig into a link). Pass a URL to load it immediately."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "Optional URL to open in the new tab."}
+            },
+        },
+    },
+    {
         "name": "browser_click",
         "description": "Click the element with the given ref, e.g. 'e12'.",
         "parameters": {
@@ -393,6 +407,8 @@ class BrowserAgent:
                 return f"[answer] {answer}" if answer else "[no answer received]"
             if call_name == "browser_navigate":
                 return s.navigate(args["url"])
+            if call_name == "browser_new_tab":
+                return s.new_tab(args.get("url"))
             if call_name == "browser_click":
                 return s.click(args["ref"])
             if call_name == "browser_fill":

@@ -185,6 +185,13 @@ async def browser_navigate(session_id: str, url: str) -> str:
 
 
 @mcp.tool()
+async def browser_new_tab(session_id: str, url: str | None = None) -> str:
+    """Open a new tab and switch the session to it. The old tab stays open.
+    In attach mode this opens a real tab in the Frontier app."""
+    return await _in_session(session_id, lambda s: s.new_tab(url))
+
+
+@mcp.tool()
 async def browser_snapshot(session_id: str) -> str:
     """Ref-tagged interactive element tree of the current page."""
     def _snap(s: BrowserSession) -> str:

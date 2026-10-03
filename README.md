@@ -215,9 +215,9 @@ stdio. Wire it into any MCP-capable main agent (Claude, Cursor, …):
  "args": ["-m", "agentic_browser.cli", "mcp"]}
 ```
 
-Tools: `browser_start_session`, `browser_navigate`, `browser_snapshot`,
-`browser_click`, `browser_fill`, `browser_press`, `browser_scroll`,
-`browser_back`, `browser_get_text`, `browser_screenshot`,
+Tools: `browser_start_session`, `browser_navigate`, `browser_new_tab`,
+`browser_snapshot`, `browser_click`, `browser_fill`, `browser_press`,
+`browser_scroll`, `browser_back`, `browser_get_text`, `browser_screenshot`,
 `browser_run_task`, `browser_close_session`.
 
 The agent is conversational: `browser_run_task` runs the autonomous loop
