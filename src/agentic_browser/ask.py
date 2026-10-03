@@ -67,13 +67,15 @@ class QueueAskChannel(AskChannel):
     and posts answers back. A timeout avoids leaking the agent thread if
     nobody answers."""
 
-    def __init__(self, ask_queue, answer_queue, timeout: float = 600) -> None:
+    def __init__(self, ask_queue, answer_queue, timeout: float = 600,
+                 meta: dict | None = None) -> None:
         self.ask_queue = ask_queue
         self.answer_queue = answer_queue
         self.timeout = timeout
+        self.meta = meta or {}
 
     def ask(self, prompt: str, options: list[str] | None = None) -> str:
-        self.ask_queue.put({"prompt": prompt, "options": options})
+        self.ask_queue.put({"prompt": prompt, "options": options, **self.meta})
         try:
             return self.answer_queue.get(timeout=self.timeout) or ""
         except Exception:

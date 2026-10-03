@@ -34,17 +34,75 @@ from .models import Router
 
 
 class ChatSessionState:
-    """One in-app chat: an attached tab, conversation history, and the
-    queues that carry ask-back questions to the UI and answers back."""
+    """One in-app chat: conversation history plus the queues that carry
+    ask-back questions to the UI and answers back.
 
-    def __init__(self, sid: str, session: BrowserSession) -> None:
+    Threading: Playwright's sync API is bound to its creating thread, so
+    each chat owns ONE worker thread that does every browser call for the
+    session's lifetime — attach, agent runs, and close all happen there.
+    The HTTP handlers only enqueue jobs and stream events."""
+
+    def __init__(self, sid: str, cdp_url: str, url_match: str | None,
+                 router: Router, brain: SecondBrain) -> None:
         self.id = sid
-        self.session = session
+        self.cdp_url = cdp_url
+        self.url_match = url_match
+        self.router = router
+        self.brain = brain
         self.history: list[tuple[str, str]] = []  # (user message, agent answer)
         self.run_lock = threading.Lock()
         self.ask_queue: queue.Queue = queue.Queue()
         self.answer_queue: queue.Queue = queue.Queue()
-        self.event_queue: queue.Queue = queue.Queue()
+        self.event_queue: queue.Queue = queue.Queue()  # (run_id, etype, data)
+        self.job_queue: queue.Queue = queue.Queue()  # ("run", run_id, msg, task, steps) | ("stop",)
+        self.session: BrowserSession | None = None
+        self.thread = threading.Thread(target=self._worker, daemon=True,
+                                       name=f"chat-{sid}")
+        self.thread.start()
+
+    def _worker(self) -> None:
+        while True:
+            job = self.job_queue.get()
+            if job[0] == "stop":
+                break
+            _, run_id, user_message, task, max_steps = job
+            try:
+                if self.session is None:
+                    self.session = BrowserSession().attach_cdp(self.cdp_url, self.url_match)
+                channel = QueueAskChannel(self.ask_queue, self.answer_queue,
+                                           meta={"run_id": run_id})
+                agent = BrowserAgent(
+                    session=self.session,
+                    brain=self.brain,
+                    router=self.router,
+                    model_role="worker",
+                    max_steps=max_steps,
+                    name="frontier-chat",
+                    trajectory_root=Path("trajectories") / "frontier-chat" / self.id,
+                    ask_channel=channel,
+                    on_event=lambda et, d, rid=run_id: self.event_queue.put((rid, et, d)),
+                )
+                result = agent.run(task)
+                self.history.append((user_message, result.answer))
+                self.event_queue.put((run_id, "done", {
+                    "answer": result.answer,
+                    "finished": result.finished,
+                    "steps": result.steps,
+                }))
+            except Exception as e:
+                self.event_queue.put((run_id, "done", {
+                    "answer": f"(chat turn failed: {type(e).__name__}: {e})",
+                    "finished": False,
+                    "steps": 0,
+                }))
+        try:
+            if self.session is not None:
+                self.session.close()
+        except Exception:
+            pass
+
+    def stop(self) -> None:
+        self.job_queue.put(("stop",))
 
 
 chat_sessions: dict[str, ChatSessionState] = {}
@@ -210,33 +268,40 @@ class WorkerHandler(BaseHTTPRequestHandler):
             with chat_lock:
                 st = chat_sessions.pop(parts[2], None)
             if st:
-                try:
-                    st.session.close()
-                except Exception:
-                    pass
+                st.stop()  # worker closes the session on its own thread
             self._json({"ok": True})
             return
         self._json({"error": "not found"}, 404)
 
     def _handle_chat_create(self) -> None:
-        """Attach a new chat to one of the Frontier app's visible tabs."""
+        """Start a chat. The tab attach happens lazily on the session's
+        worker thread (Playwright is thread-bound); here we just check the
+        CDP endpoint is reachable."""
         req = self._read_json()
         cdp_url = req.get("cdp_url")
         if not cdp_url:
             self._json({"error": "cdp_url required"}, 400)
             return
         try:
-            session = BrowserSession().attach_cdp(cdp_url, req.get("url_match"))
+            import urllib.request as _url
+
+            with _url.urlopen(cdp_url.rstrip("/") + "/json/version", timeout=5):
+                pass
         except Exception as e:
-            self._json({"error": f"attach failed: {e}"}, 502)
+            self._json({"error": f"CDP unreachable: {e}"}, 502)
             return
+        router: Router = self.server.router  # type: ignore[attr-defined]
+        brain: SecondBrain = self.server.brain  # type: ignore[attr-defined]
         sid = uuid.uuid4().hex[:12]
         with chat_lock:
-            chat_sessions[sid] = ChatSessionState(sid, session)
+            chat_sessions[sid] = ChatSessionState(
+                sid, cdp_url, req.get("url_match"), router, brain)
         self._json({"session_id": sid})
 
     def _handle_chat_run(self, sid: str) -> None:
-        """Run one chat turn as SSE. Streams thought/action/question/done."""
+        """Run one chat turn as SSE. Streams status/thought/action/question,
+        then done. Events carry the run id so a stale turn's leftovers
+        can't leak into a newer stream."""
         with chat_lock:
             st = chat_sessions.get(sid)
         if st is None:
@@ -254,9 +319,8 @@ class WorkerHandler(BaseHTTPRequestHandler):
 
             # Conversation context: last few exchanges keep the agent grounded
             # in what was already discussed and done in this tab.
-            hist = st.history[-6:]
             ctx_lines = []
-            for um, aa in hist:
+            for um, aa in st.history[-6:]:
                 ctx_lines.append(f"User: {um[:400]}")
                 ctx_lines.append(f"Agent: {aa[:600]}")
             ctx = "\n".join(ctx_lines)
@@ -268,23 +332,8 @@ class WorkerHandler(BaseHTTPRequestHandler):
                 "clarification), ask with the ask_user tool."
             )
 
-            router: Router = self.server.router  # type: ignore[attr-defined]
-            brain: SecondBrain = self.server.brain  # type: ignore[attr-defined]
-            channel = QueueAskChannel(st.ask_queue, st.answer_queue)
-            agent = BrowserAgent(
-                session=st.session,
-                brain=brain,
-                router=router,
-                model_role="worker",
-                max_steps=int(req.get("max_steps", 40)),
-                name="frontier-chat",
-                trajectory_root=Path("trajectories") / "frontier-chat" / sid,
-                ask_channel=channel,
-                on_event=lambda et, d: st.event_queue.put((et, d)),
-            )
-            box: dict = {}
-            t = threading.Thread(target=lambda: box.update(result=agent.run(task)), daemon=True)
-            t.start()
+            run_id = uuid.uuid4().hex[:8]
+            st.job_queue.put(("run", run_id, message, task, int(req.get("max_steps", 40))))
 
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
@@ -297,32 +346,26 @@ class WorkerHandler(BaseHTTPRequestHandler):
                 self.wfile.flush()
 
             send({"type": "status", "text": "working…"})
-            while t.is_alive() or not st.event_queue.empty():
+            while True:
                 try:
                     q = st.ask_queue.get_nowait()
-                    send({"type": "question", "prompt": q["prompt"], "options": q.get("options")})
+                    if q.get("run_id") == run_id:
+                        send({"type": "question", "prompt": q["prompt"],
+                              "options": q.get("options")})
                 except queue.Empty:
                     pass
                 try:
-                    etype, data = st.event_queue.get(timeout=1.0)
+                    rid, etype, data = st.event_queue.get(timeout=1.0)
+                    if rid != run_id:
+                        continue  # stale turn's leftovers
                     send({"type": etype, **data})
+                    if etype == "done":
+                        break
                 except queue.Empty:
                     self.wfile.write(b": ping\n\n")
                     self.wfile.flush()
-            t.join()
-            result = box.get("result")
-            if result is None:
-                send({"type": "done", "answer": "(agent crashed)", "finished": False, "steps": 0})
-            else:
-                send({
-                    "type": "done",
-                    "answer": result.answer,
-                    "finished": result.finished,
-                    "steps": result.steps,
-                })
-                st.history.append((message, result.answer))
         except (BrokenPipeError, ConnectionResetError):
-            pass  # UI went away mid-stream; the agent thread keeps its answer queued
+            pass  # UI went away mid-stream; the worker thread keeps going
         finally:
             st.run_lock.release()
 

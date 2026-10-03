@@ -10,7 +10,7 @@ import json
 import sys
 import threading
 import urllib.request
-from http.server import ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -53,6 +53,16 @@ def _post(base, path, body=None, method="POST"):
         return json.loads(r.read())
 
 
+class _FakeCDP(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b'{"Browser": "fake"}')
+
+    def log_message(self, *a):
+        pass
+
+
 def test_chat_roundtrip():
     serve_mod.BrowserSession = FakeBrowserSession
     serve_mod.BrowserAgent = StubAgent
@@ -63,9 +73,13 @@ def test_chat_roundtrip():
     base = f"http://127.0.0.1:{port}"
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
+    # fake CDP endpoint for the reachability check
+    cdp = HTTPServer(("127.0.0.1", 0), _FakeCDP)
+    cdp_port = cdp.server_address[1]
+    threading.Thread(target=cdp.serve_forever, daemon=True).start()
     try:
         # create
-        r = _post(base, "/chat-sessions", {"cdp_url": "http://127.0.0.1:9333"})
+        r = _post(base, "/chat-sessions", {"cdp_url": f"http://127.0.0.1:{cdp_port}"})
         sid = r["session_id"]
         assert sid
 
