@@ -44,6 +44,15 @@ _registry_lock = threading.Lock()
 _router: Router | None = None
 _brain: SecondBrain | None = None
 
+# Attach mode: drive the Frontier app's visible tabs over CDP instead of
+# launching headless Chromium. Set via --cdp-url.
+_cdp_url: str | None = None
+
+
+def configure(*, cdp_url: str | None = None) -> None:
+    global _cdp_url
+    _cdp_url = cdp_url
+
 
 def _shared() -> tuple[Router, SecondBrain]:
     global _router, _brain
@@ -122,15 +131,51 @@ class ElicitationAskChannel(AskChannel):
 # -- tools ---------------------------------------------------------------
 
 @mcp.tool()
-async def browser_start_session(headless: bool = True) -> str:
-    """Start a browser session. Returns a session_id for the other tools."""
+async def browser_start_session(
+    headless: bool = True, url_match: str | None = None
+) -> str:
+    """Start a browser session. Returns a session_id for the other tools.
+    In attach mode (--cdp-url) this takes over one of the Frontier app's
+    visible tabs instead of launching Chromium; url_match optionally picks
+    the tab (exact URL, then substring, then first http(s) tab)."""
     def _start() -> str:
         sid = uuid.uuid4().hex[:12]
         with _registry_lock:
-            _sessions[sid] = BrowserSession(headless=headless).start()
+            if _cdp_url:
+                _sessions[sid] = BrowserSession().attach_cdp(_cdp_url, url_match)
+            else:
+                _sessions[sid] = BrowserSession(headless=headless).start()
             _locks[sid] = threading.Lock()
         return sid
     return await asyncio.to_thread(_start)
+
+
+@mcp.tool()
+async def browser_list_tabs() -> str:
+    """List the Frontier app's open web tabs (attach mode only)."""
+    if not _cdp_url:
+        return "attach mode only — start the server with --cdp-url"
+
+    def _list() -> str:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as pw:
+            browser = pw.chromium.connect_over_cdp(_cdp_url)
+            try:
+                lines = []
+                for ctx in browser.contexts:
+                    for p in ctx.pages:
+                        if "/renderer/" in p.url:
+                            continue
+                        lines.append(f"{p.url}  |  {p.title()}")
+                return "\n".join(lines) or "(no web tabs open)"
+            finally:
+                try:
+                    browser.close()  # CDP: drops the connection, keeps the app alive
+                except Exception:
+                    pass
+
+    return await asyncio.to_thread(_list)
 
 
 @mcp.tool()
@@ -245,9 +290,10 @@ async def browser_close_session(session_id: str) -> str:
     return await asyncio.to_thread(_close)
 
 
-def main() -> None:
+def main(cdp_url: str | None = None) -> None:
     import asyncio as _asyncio
 
+    configure(cdp_url=cdp_url)
     _asyncio.run(mcp.run_stdio_async())
 
 

@@ -137,7 +137,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
 def cmd_mcp(args: argparse.Namespace) -> int:
     from agentic_browser.mcp_server import main as mcp_main
 
-    mcp_main()
+    mcp_main(cdp_url=args.cdp_url)
     return 0
 
 
@@ -257,6 +257,9 @@ def main() -> int:
     v.set_defaults(fn=cmd_serve)
 
     m = sub.add_parser("mcp", help="Run the MCP server (stdio) so any main agent can drive the browser.")
+    m.add_argument("--cdp-url", default=None,
+                   help="Attach to a running browser over CDP (e.g. the Frontier app) "
+                        "instead of launching headless Chromium.")
     m.set_defaults(fn=cmd_mcp)
 
     u = sub.add_parser("usage", help="Show metered model spend.")
