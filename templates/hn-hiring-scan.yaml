@@ -1,0 +1,18 @@
+name: hn-hiring-scan
+description: Scan HN's monthly "Who is hiring" thread for matching roles
+schedule:
+  weekly:
+    days: [fri]
+    at: "09:00"
+timezone: America/Los_Angeles
+use_orchestrator: false
+max_steps: 30
+vars:
+  keywords: "python, llm, agent, remote"
+task: |
+  Find the current month's "Ask HN: Who is hiring?" thread on Hacker News
+  (https://news.ycombinator.com — it is usually near the top around the start of the month;
+  you can also use the search at https://hn.algolia.com).
+  Scan the job comments for postings matching ANY of these keywords: {keywords}.
+  For each match report: company name, role title, location/remote status, and the comment's permalink.
+  Finish with the list (or "no matches this week" if none).

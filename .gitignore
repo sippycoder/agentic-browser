@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+brain/
+brain-eval/
+trajectories/
+profiles/
+eval-report.md
+*.png
+*.egg-info/

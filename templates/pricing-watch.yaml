@@ -1,0 +1,20 @@
+name: pricing-watch
+description: Watch competitor pricing pages for changes, weekly
+schedule:
+  weekly:
+    days: [mon]
+    at: "09:00"
+timezone: America/Los_Angeles
+use_orchestrator: false
+max_steps: 30
+vars:
+  urls: |
+    https://vercel.com/pricing
+    https://www.netlify.com/pricing/
+task: |
+  Check these pricing pages for changes since the last run:
+  {urls}
+  First read "workflows/pricing-watch/memory/last-run.md" for what the prices/plans were last time.
+  Visit each URL, note the current plans and headline prices, and compare against the previous run.
+  Finish with a concise report: per page, either "no change" or exactly what changed.
+  If this is the first run (no previous notes), record the full baseline instead.

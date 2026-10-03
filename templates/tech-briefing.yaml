@@ -1,0 +1,14 @@
+name: tech-briefing
+description: Top tech stories every morning from HN and Lobsters
+schedule:
+  daily: "07:00"
+timezone: America/Los_Angeles
+use_orchestrator: true
+workers: 2
+max_steps: 25
+task: |
+  Research today's top tech stories. Use two parallel angles:
+  1. Hacker News (https://news.ycombinator.com): the current top 5 stories — title and points for each.
+  2. Lobsters (https://lobste.rs): the current top 5 stories — title and score for each.
+  For the single most-discussed story overall, also capture what the discussion is about in 2-3 sentences.
+  Write the briefing to brain path "workflows/tech-briefing/memory/briefing.md" and finish with the briefing as your answer.

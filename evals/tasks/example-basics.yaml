@@ -1,0 +1,12 @@
+id: example-basics
+start_url: fixture://basics.html
+goal: >
+  Visit the page and report: (1) the exact text of the main heading,
+  (2) the destination URL of the page's link.
+rubrics:
+  - id: R1-heading
+    requirement: The answer states the main heading text is "Acme Widget Store".
+    notes: Check the final answer and the screenshots.
+  - id: R2-link
+    requirement: The answer gives a link destination containing "iana.org".
+    notes: The page has one link; its href should point at iana.org.

@@ -1,0 +1,12 @@
+id: wikipedia-python
+start_url: https://en.wikipedia.org/wiki/Python_(programming_language)
+goal: >
+  On this Wikipedia page, find who created the Python programming language
+  and the year it first appeared, and report both.
+rubrics:
+  - id: R1-creator
+    requirement: The answer names Guido van Rossum as the creator/designer of Python.
+    notes: Accept "Guido van Rossum" in any casing.
+  - id: R2-year
+    requirement: The answer states Python first appeared in 1991.
+    notes: The infobox "First appeared" field says 1991.

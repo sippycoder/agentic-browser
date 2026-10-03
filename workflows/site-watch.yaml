@@ -1,0 +1,15 @@
+name: site-watch
+description: Check that a list of sites is up and unchanged, every 6 hours
+schedule:
+  every: "6h"
+use_orchestrator: false
+max_steps: 20
+vars:
+  urls: |
+    https://example.com
+task: |
+  Uptime/content check for these sites:
+  {urls}
+  Visit each URL. For each report: HTTP reachable (yes/no), page title, and whether the
+  visible headline content differs from "workflows/site-watch/memory/last-run.md".
+  Finish with one line per site: OK / CHANGED / DOWN.

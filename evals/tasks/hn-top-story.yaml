@@ -1,0 +1,9 @@
+id: hn-top-story
+start_url: https://news.ycombinator.com
+goal: >
+  Identify the current #1 (top-ranked) story on the Hacker News front page
+  and report its exact title.
+rubrics:
+  - id: R1-top-title
+    requirement: The answer gives the exact title of the story ranked #1 at the time of the run.
+    notes: Verify against the screenshots in the trajectory — the top story is the first item on the page. Titles change over time, so judge from what the agent actually saw, not from outside knowledge.
